@@ -36,7 +36,15 @@ export function useNoisePlayer() {
   const [hasSwitched, setHasSwitched] = useState(Boolean(initial.hasSwitched))
 
   const engineRef = useRef(null)
-  if (!engineRef.current) engineRef.current = new NoiseEngine({ onStateChange: setPlaying })
+  if (!engineRef.current) {
+    // ?loop=1 makes every loop one second long, to exercise the loop hand-over
+    // constantly when debugging.
+    const loop = Number(new URLSearchParams(window.location.search).get('loop'))
+    engineRef.current = new NoiseEngine({
+      onStateChange: setPlaying,
+      ...(loop >= 0.5 && loop <= 60 && { loopSeconds: loop }),
+    })
+  }
   const engine = engineRef.current
 
   const colorIndexRef = useRef(colorIndex)

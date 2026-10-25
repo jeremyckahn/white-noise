@@ -68,3 +68,13 @@ describe('wav encoding', () => {
     expect(view.getInt16(44 + 14, true)).toBe(-32767)
   })
 })
+
+describe('short loops', () => {
+  it('renders a one-second loop with a seam that fits inside it', () => {
+    const [left] = renderLoop('pink', RATE, { seconds: 1 })
+    expect(left.length).toBe(RATE)
+    let peak = 0
+    for (const x of left) peak = Math.max(peak, Math.abs(x))
+    expect(peak).toBeLessThanOrEqual(0.99)
+  })
+})

@@ -7,12 +7,12 @@ let worker
 let nextId = 0
 const pending = new Map()
 
-const renderInline = (type, sampleRate) => encodeWav(renderLoop(type, sampleRate), sampleRate)
+const renderInline = (type, sampleRate, seconds) => encodeWav(renderLoop(type, sampleRate, { seconds }), sampleRate)
 
 const failAll = () => {
   worker?.terminate()
   worker = null
-  for (const { type, sampleRate, resolve } of pending.values()) resolve(renderInline(type, sampleRate))
+  for (const { type, sampleRate, seconds, resolve } of pending.values()) resolve(renderInline(type, sampleRate, seconds))
   pending.clear()
 }
 
@@ -32,12 +32,12 @@ const getWorker = () => {
 }
 
 /** Resolves to a WAV Blob containing a seamless stereo loop of the given colour. */
-export const generateLoopBlob = (type, sampleRate) => {
+export const generateLoopBlob = (type, sampleRate, seconds) => {
   const w = getWorker()
-  if (!w) return Promise.resolve(renderInline(type, sampleRate))
+  if (!w) return Promise.resolve(renderInline(type, sampleRate, seconds))
   return new Promise((resolve) => {
     const id = nextId++
-    pending.set(id, { type, sampleRate, resolve })
-    w.postMessage({ id, type, sampleRate })
+    pending.set(id, { type, sampleRate, seconds, resolve })
+    w.postMessage({ id, type, sampleRate, seconds })
   })
 }

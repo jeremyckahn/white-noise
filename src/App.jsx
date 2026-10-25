@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
 import Slider from '@mui/material/Slider'
 import Typography from '@mui/material/Typography'
 import VolumeDownRounded from '@mui/icons-material/VolumeDownRounded'
@@ -11,19 +12,36 @@ import ColorPicker from './components/ColorPicker.jsx'
 
 const debug = new URLSearchParams(window.location.search).has('debug')
 
-// Plain-text engine state, shown with ?debug to help diagnose problems on a device.
+// Plain-text engine state and event log, shown with ?debug to help diagnose
+// problems on a device (for example what happened while the screen was locked).
 function DebugInfo({ engine }) {
   const [info, setInfo] = useState('')
+  const [copied, setCopied] = useState(false)
+  const report = () => `build ${__BUILD_ID__}\n${JSON.stringify(engine.diagnostics())}\n${engine.logLines().join('\n')}`
   useEffect(() => {
-    const update = () => setInfo(`build ${__BUILD_ID__} · ${JSON.stringify(engine.diagnostics())}`)
+    const update = () => setInfo(`build ${__BUILD_ID__} \u00b7 ${JSON.stringify(engine.diagnostics())}\n${engine.logLines(8).join('\n')}`)
     update()
     const timer = setInterval(update, 1000)
     return () => clearInterval(timer)
   }, [engine])
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(report())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
   return (
-    <Typography sx={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'text.secondary', wordBreak: 'break-all', textAlign: 'center' }}>
-      {info}
-    </Typography>
+    <Box sx={{ width: '100%' }}>
+      <Typography sx={{ fontFamily: 'monospace', fontSize: '0.62rem', color: 'text.secondary', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+        {info}
+      </Typography>
+      <Button size="small" onClick={copy} sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+        {copied ? 'Copied' : 'Copy full log'}
+      </Button>
+    </Box>
   )
 }
 
