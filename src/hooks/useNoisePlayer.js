@@ -36,12 +36,7 @@ export function useNoisePlayer() {
   const [hasSwitched, setHasSwitched] = useState(Boolean(initial.hasSwitched))
 
   const engineRef = useRef(null)
-  if (!engineRef.current) {
-    engineRef.current = new NoiseEngine({
-      onStateChange: setPlaying,
-      mediaElementOutput: new URLSearchParams(window.location.search).get('route') === 'media',
-    })
-  }
+  if (!engineRef.current) engineRef.current = new NoiseEngine({ onStateChange: setPlaying })
   const engine = engineRef.current
 
   const colorIndexRef = useRef(colorIndex)
@@ -151,6 +146,7 @@ export function useNoisePlayer() {
     error,
     hasSwitched,
     supported: engine.supported,
+    engine,
     toggle,
     step,
     selectIndex,

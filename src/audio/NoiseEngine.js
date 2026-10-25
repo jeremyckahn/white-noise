@@ -1,35 +1,54 @@
-import workletUrl from './noise-processor.js?worker&url'
-import { createGenerator } from './generators.js'
+import { NOISE_TYPES } from './generators.js'
+import { generateLoop } from './generateLoop.js'
 
 const FADE_TIME_CONSTANT = 0.05 // seconds; a colour change is complete in ~0.2s
 const START_FADE = 0.25
 const STOP_FADE = 0.6
-const DISCONNECT_AFTER_MS = 800
+const STOP_AFTER_MS = 800
 
 // Maps the 0..1 slider onto a gain that feels even to the ear.
 const volumeToGain = (volume) => volume * volume
 
+// Ten seconds of digital silence as a WAV file.
+const createSilentWavUrl = (seconds = 10, rate = 8000) => {
+  const samples = seconds * rate
+  const view = new DataView(new ArrayBuffer(44 + samples * 2))
+  const text = (offset, value) => [...value].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)))
+  text(0, 'RIFF')
+  view.setUint32(4, 36 + samples * 2, true)
+  text(8, 'WAVEfmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, 1, true) // mono
+  view.setUint32(24, rate, true)
+  view.setUint32(28, rate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  text(36, 'data')
+  view.setUint32(40, samples * 2, true)
+  return URL.createObjectURL(new Blob([view], { type: 'audio/wav' }))
+}
+
 /**
- * Procedural noise player.
+ * Noise player.
  *
- * One AudioWorklet node per colour is created lazily and cross-faded, so
- * changing colour is instant and the noise itself never loops.
+ * Each colour is procedurally generated (in a worker) as a long, seamlessly
+ * loopable stereo buffer, then played by the browser's native audio engine, so
+ * no JavaScript has to run in real time and there is nothing to glitch.
+ * Colours are cross-faded, so switching is instant.
  *
- * Output goes straight to the audio device, which is the glitch-free path.
- * The Audio Session API ('playback') is what tells mobile browsers to keep it
- * going once the screen is off. As a fallback for browsers that ignore that,
- * `mediaElementOutput` instead routes the graph through a MediaStream into an
- * <audio> element (open the app with ?route=media to try it). That path is
- * more likely to be treated as media playback, but can stutter on some phones.
+ * Alongside it a silent <audio> element plays. Mobile browsers only show
+ * lock-screen media controls and keep a page alive with the screen off for
+ * real media elements, which Web Audio on its own is not.
  */
 export class NoiseEngine {
-  constructor({ onStateChange, mediaElementOutput = false } = {}) {
-    this.mediaElementOutput = mediaElementOutput
+  constructor({ onStateChange } = {}) {
     this.onStateChange = onStateChange ?? (() => {})
     this.ctx = null
     this.master = null
-    this.audioEl = null
-    this.channels = new Map() // colour -> { node, gain, timer }
+    this.keepAlive = null
+    this.buffers = new Map() // colour -> Promise<AudioBuffer>
+    this.channels = new Map() // colour -> { source, gain, timer }
     this.color = null
     this.volume = 0.6
     this.playing = false
@@ -41,6 +60,23 @@ export class NoiseEngine {
     return typeof (window.AudioContext ?? window.webkitAudioContext) === 'function'
   }
 
+  #startKeepAlive() {
+    if (!this.keepAlive) {
+      const el = document.createElement('audio')
+      el.setAttribute('playsinline', '')
+      el.loop = true
+      el.src = createSilentWavUrl()
+      // The system (lock screen, another app taking focus, a call) can pause
+      // the element; mirror that rather than playing on invisibly.
+      el.addEventListener('pause', () => {
+        if (this.playing && el.paused) this.pause()
+      })
+      this.keepAlive = el
+    }
+    // Called synchronously from the user's tap, so the browser allows it.
+    return this.keepAlive.play().catch(() => {})
+  }
+
   async #setup() {
     if (this.setupPromise) return this.setupPromise
     this.setupPromise = (async () => {
@@ -50,27 +86,12 @@ export class NoiseEngine {
       } catch {
         /* unsupported */
       }
-
       const AudioContextClass = window.AudioContext ?? window.webkitAudioContext
       const ctx = new AudioContextClass({ latencyHint: 'playback' })
       this.ctx = ctx
       this.master = ctx.createGain()
       this.master.gain.value = 0
-
-      if (ctx.audioWorklet) await ctx.audioWorklet.addModule(workletUrl)
-
-      let routedToElement = false
-      if (this.mediaElementOutput && typeof ctx.createMediaStreamDestination === 'function') {
-        const dest = ctx.createMediaStreamDestination()
-        this.master.connect(dest)
-        const el = document.createElement('audio')
-        el.setAttribute('playsinline', '')
-        el.srcObject = dest.stream
-        this.audioEl = el
-        routedToElement = true
-      }
-      if (!routedToElement) this.master.connect(ctx.destination)
-
+      this.master.connect(ctx.destination)
       ctx.addEventListener('statechange', () => {
         // iOS "interrupts" the context for calls and alarms; pick back up.
         if (this.playing && ctx.state !== 'running' && ctx.state !== 'closed') {
@@ -86,32 +107,29 @@ export class NoiseEngine {
     }
   }
 
-  #createSource(color) {
-    const ctx = this.ctx
-    let node
-    if (ctx.audioWorklet) {
-      node = new AudioWorkletNode(ctx, 'noise-processor', {
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [2],
-        processorOptions: { type: color },
+  #buffer(color) {
+    let promise = this.buffers.get(color)
+    if (!promise) {
+      const ctx = this.ctx
+      promise = generateLoop(color, ctx.sampleRate).then((channels) => {
+        const buffer = ctx.createBuffer(channels.length, channels[0].length, ctx.sampleRate)
+        channels.forEach((data, index) => buffer.copyToChannel(data, index))
+        return buffer
       })
-    } else {
-      // Older browsers: same generators, on the main thread.
-      node = ctx.createScriptProcessor(4096, 0, 2)
-      const generators = [createGenerator(color, ctx.sampleRate), createGenerator(color, ctx.sampleRate)]
-      node.onaudioprocess = (event) => {
-        for (let ch = 0; ch < 2; ch++) {
-          const out = event.outputBuffer.getChannelData(ch)
-          const generate = generators[ch]
-          for (let i = 0; i < out.length; i++) out[i] = generate()
-        }
-      }
+      this.buffers.set(color, promise)
     }
-    const gain = ctx.createGain()
-    gain.gain.value = 0
-    node.connect(gain)
-    return { node, gain, timer: null, connected: false }
+    return promise
+  }
+
+  /** Quietly prepare the other colours so switching to them is instant. */
+  #prepareRest() {
+    const queue = NOISE_TYPES.filter((type) => !this.buffers.has(type))
+    const next = () => {
+      const type = queue.shift()
+      if (!type || !this.ctx) return
+      this.#buffer(type).then(() => setTimeout(next, 100))
+    }
+    next()
   }
 
   #fadeTo(channel, target) {
@@ -122,30 +140,47 @@ export class NoiseEngine {
     gain.gain.setTargetAtTime(target, now, FADE_TIME_CONSTANT)
   }
 
-  #activate(color) {
+  #startChannel(color, buffer) {
     let channel = this.channels.get(color)
     if (!channel) {
-      channel = this.#createSource(color)
+      const source = this.ctx.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+      const gain = this.ctx.createGain()
+      gain.gain.value = 0
+      source.connect(gain)
+      gain.connect(this.master)
+      // Start somewhere different each time so repeats never line up.
+      source.start(0, Math.random() * buffer.duration)
+      channel = { source, gain, timer: null }
       this.channels.set(color, channel)
     }
     clearTimeout(channel.timer)
-    if (!channel.connected) {
-      channel.gain.connect(this.master)
-      channel.connected = true
-    }
     this.#fadeTo(channel, 1)
   }
 
-  #deactivate(color) {
+  #stopChannel(color) {
     const channel = this.channels.get(color)
-    if (!channel || !channel.connected) return
+    if (!channel) return
     this.#fadeTo(channel, 0)
     clearTimeout(channel.timer)
-    // Disconnecting stops the worklet being rendered, which saves battery.
+    // Once silent, release it so it stops costing battery.
     channel.timer = setTimeout(() => {
+      channel.source.stop()
+      channel.source.disconnect()
       channel.gain.disconnect()
-      channel.connected = false
-    }, DISCONNECT_AFTER_MS)
+      this.channels.delete(color)
+    }, STOP_AFTER_MS)
+  }
+
+  /** Make the audible colour match `this.color`. */
+  async #apply() {
+    const color = this.color
+    const buffer = await this.#buffer(color)
+    // Superseded by a newer choice, or paused, while the loop was being made.
+    if (!this.playing || color !== this.color) return
+    this.#startChannel(color, buffer)
+    for (const other of this.channels.keys()) if (other !== color) this.#stopChannel(other)
   }
 
   #updateMasterGain(fade) {
@@ -162,11 +197,8 @@ export class NoiseEngine {
   }
 
   setColor(color) {
-    const previous = this.color
     this.color = color
-    if (!this.ctx || !this.playing || previous === color) return
-    if (previous) this.#deactivate(previous)
-    this.#activate(color)
+    if (this.ctx && this.playing) this.#apply()
   }
 
   /** Must be called from a user gesture the first time (autoplay policies). */
@@ -175,23 +207,16 @@ export class NoiseEngine {
     clearTimeout(this.stopTimer)
     this.playing = true
     this.onStateChange(true)
+    const keepAlive = this.#startKeepAlive()
     try {
       await this.#setup()
-      if (!this.playing) return
       await this.ctx.resume()
-      if (this.audioEl) {
-        try {
-          await this.audioEl.play()
-        } catch {
-          // Element playback was refused; fall back to direct output.
-          this.master.disconnect()
-          this.master.connect(this.ctx.destination)
-          this.audioEl = null
-        }
-      }
-      for (const key of this.channels.keys()) if (key !== color) this.#deactivate(key)
-      this.#activate(color)
+      await keepAlive
+      if (!this.playing) return
+      await this.#apply()
+      if (!this.playing) return
       this.#updateMasterGain(START_FADE / 3)
+      this.#prepareRest()
     } catch (error) {
       this.playing = false
       this.onStateChange(false)
@@ -209,8 +234,8 @@ export class NoiseEngine {
     // Once faded out, release the audio hardware entirely.
     this.stopTimer = setTimeout(() => {
       if (this.playing) return
-      for (const key of this.channels.keys()) this.#deactivate(key)
-      this.audioEl?.pause()
+      for (const key of [...this.channels.keys()]) this.#stopChannel(key)
+      this.keepAlive?.pause()
       this.ctx.suspend().catch(() => {})
     }, STOP_FADE * 1000 + 100)
   }
@@ -219,6 +244,19 @@ export class NoiseEngine {
   async recover() {
     if (!this.playing || !this.ctx) return
     if (this.ctx.state !== 'running') await this.ctx.resume().catch(() => {})
-    if (this.audioEl?.paused) await this.audioEl.play().catch(() => {})
+    if (this.keepAlive?.paused) await this.keepAlive.play().catch(() => {})
+  }
+
+  /** Plain-text state for the ?debug readout. */
+  diagnostics() {
+    const { ctx, keepAlive } = this
+    return {
+      context: ctx?.state ?? 'none',
+      sampleRate: ctx?.sampleRate,
+      outputLatencyMs: ctx?.outputLatency != null ? Math.round(ctx.outputLatency * 1000) : undefined,
+      keepAlive: keepAlive ? (keepAlive.paused ? 'paused' : 'playing') : 'none',
+      loopsReady: this.buffers.size,
+      active: [...this.channels.keys()].join(',') || 'none',
+    }
   }
 }

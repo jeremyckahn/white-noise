@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Box from '@mui/material/Box'
 import Slider from '@mui/material/Slider'
 import Typography from '@mui/material/Typography'
@@ -8,6 +8,24 @@ import { NOISE_COLORS } from './noiseColors.js'
 import { useNoisePlayer } from './hooks/useNoisePlayer.js'
 import ColorStage from './components/ColorStage.jsx'
 import ColorPicker from './components/ColorPicker.jsx'
+
+const debug = new URLSearchParams(window.location.search).has('debug')
+
+// Plain-text engine state, shown with ?debug to help diagnose problems on a device.
+function DebugInfo({ engine }) {
+  const [info, setInfo] = useState('')
+  useEffect(() => {
+    const update = () => setInfo(`build ${__BUILD_ID__} · ${JSON.stringify(engine.diagnostics())}`)
+    update()
+    const timer = setInterval(update, 1000)
+    return () => clearInterval(timer)
+  }, [engine])
+  return (
+    <Typography sx={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'text.secondary', wordBreak: 'break-all', textAlign: 'center' }}>
+      {info}
+    </Typography>
+  )
+}
 
 export default function App() {
   const player = useNoisePlayer()
@@ -81,6 +99,8 @@ export default function App() {
                 ? 'Swipe sideways, or tap a colour'
                 : '')}
         </Typography>
+
+        {debug && <DebugInfo engine={player.engine} />}
 
         <ColorPicker selectedIndex={colorIndex} onSelect={player.selectIndex} />
 

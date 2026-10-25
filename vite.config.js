@@ -6,8 +6,12 @@ import { VitePWA } from 'vite-plugin-pwa'
 // the deploy workflow supplies through BASE_PATH.
 const base = process.env.BASE_PATH ?? '/'
 
+// Identifies the running build (shown with ?debug) so it's clear which deploy a device has.
+const buildId = (process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 7)
+
 export default defineConfig({
   base,
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
     VitePWA({
