@@ -11,6 +11,7 @@ const buildId = (process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? 
 
 export default defineConfig({
   base,
+  build: { rollupOptions: { input: { main: 'index.html', diag: 'diag.html' } } },
   define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
@@ -21,6 +22,7 @@ export default defineConfig({
         // Everything the app needs, including the audio worklet, is precached.
         globPatterns: ['**/*.{js,css,html,svg,png,woff,woff2,ico,webmanifest}'],
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/diag\.html$/],
         cleanupOutdatedCaches: true,
       },
       manifest: {
