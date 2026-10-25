@@ -51,3 +51,20 @@ describe('seamless loops', () => {
     expect(peak).toBeLessThanOrEqual(0.99)
   })
 })
+
+describe('wav encoding', () => {
+  it('writes a valid 16-bit PCM header and clamps samples', async () => {
+    const { encodeWav } = await import('../src/audio/wav.js')
+    const blob = encodeWav([new Float32Array([0, 1, -1, 2]), new Float32Array([0.5, 0, 0, -3])], 44100)
+    const view = new DataView(await blob.arrayBuffer())
+    const tag = (offset) => String.fromCharCode(...[0, 1, 2, 3].map((i) => view.getUint8(offset + i)))
+    expect([tag(0), tag(8), tag(36)]).toEqual(['RIFF', 'WAVE', 'data'])
+    expect(view.getUint16(22, true)).toBe(2) // channels
+    expect(view.getUint32(24, true)).toBe(44100)
+    expect(view.getUint32(40, true)).toBe(4 * 2 * 2)
+    expect(blob.size).toBe(44 + 16)
+    // Interleaved: L0 R0 L1 R1 ... with 2 and -3 clamped to full scale.
+    expect(view.getInt16(44 + 4, true)).toBe(32767)
+    expect(view.getInt16(44 + 14, true)).toBe(-32767)
+  })
+})

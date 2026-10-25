@@ -2,9 +2,9 @@
 
 A calm, endless noise generator for sleep. An installable, offline-first PWA built with React, Vite and MUI.
 
-- **Six colours** – white, pink, brown, blue, violet and grey noise, generated procedurally on your device (in a Web Worker) each launch. Each colour is a 20-second stereo loop whose seam is cross-faded so there is no click or dip, started at a random point each time; the browser's native audio engine plays it, so no JavaScript runs in real time and there is nothing to glitch.
-- **Instant switching** – tap a colour, swipe sideways on the main area, or use the lock-screen next/previous controls (arrow keys work on desktop). Colours cross-fade in ~0.2 s.
-- **Keeps playing with the screen off** – a silent `<audio>` element plays alongside the noise, so mobile browsers treat the page as media playback: lock-screen controls (play/pause, next/previous colour) appear and the page stays alive. The Audio Session API is set to `playback` for iOS. It runs until you pause it.
+- **Six colours** – white, pink, brown, blue, violet and grey noise, generated procedurally on your device (in a Web Worker) each launch. Each colour is a 20-second stereo loop with a cross-faded seam, wrapped as a WAV and played by an ordinary `<audio>` element. A second element takes over shortly before each loop ends and the two cross-fade, because native looping leaves a ~100 ms gap.
+- **Instant switching** – tap a colour, swipe sideways on the main area, or use the lock-screen next/previous controls (arrow keys work on desktop). Colours cross-fade in a quarter of a second.
+- **Keeps playing with the screen off** – because it is real media playback, Android and iOS show lock-screen controls (play/pause, next/previous colour) and keep the page alive. Media Session is told the stream is endless so lock screens don't draw a progress bar. It runs until you pause it. (iOS can't set an `<audio>` element's volume, so there the in-app slider is hidden, use the hardware buttons, and colours switch without a cross-fade.)
 - **Works offline** – the service worker precaches the app, fonts and loop worker.
 
 ## Development
@@ -31,7 +31,8 @@ The icons in `public/icons` are rendered from `public/icon.svg` with `npm run ic
 ## Layout
 
 - `src/audio/generators.js` – the noise algorithms (pure, shared by the worker and tests)
-- `src/audio/loop.js`, `loop-worker.js`, `generateLoop.js` – render a colour into a seamless loop off the main thread
-- `src/audio/NoiseEngine.js` – audio graph, cross-fading, keep-alive media element, play/pause lifecycle
+- `src/audio/loop.js`, `wav.js`, `loop-worker.js`, `generateLoop.js` – render a colour into a seamless WAV loop off the main thread
+- `src/audio/NoiseEngine.js` – the two-element player: cross-fading, loop hand-over, play/pause lifecycle
+- `diag.html` / `src/diag.js` – `/diag.html` runs each audio path in isolation to debug a device
 - `src/hooks/useNoisePlayer.js` – React state, persistence and Media Session wiring
 - `src/components/` – play button, swipeable stage, colour picker
