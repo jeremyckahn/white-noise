@@ -146,6 +146,8 @@ export function useNoisePlayer() {
     error,
     hasSwitched,
     supported: engine.supported,
+    volumeSupported: engine.volumeSupported,
+    engine,
     toggle,
     step,
     selectIndex,

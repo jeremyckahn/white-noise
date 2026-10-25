@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Lull diagnostics</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #0d0f12; color: #ece7dc; font: 15px/1.5 Georgia, serif; }
+      h1 { font-size: 1.3rem; margin: 0 0 4px; }
+      p { margin: 6px 0; color: #b9b3a6; }
+      select, button { font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid #4a4d55; background: #1a1d23; color: inherit; }
+      button { display: block; width: 100%; margin: 8px 0; text-align: left; }
+      button.on { background: #3a3550; border-color: #bfaee6; }
+      pre { white-space: pre-wrap; word-break: break-all; background: #14161b; padding: 10px; border-radius: 8px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Lull diagnostics</h1>
+    <p>Run each test for about 30 seconds and note which ones stutter and which show lock-screen controls. Then tap "Copy report" and send it back.</p>
+    <p>Noise colour: <select id="color"></select></p>
+    <div id="tests"></div>
+    <button id="copy">Copy report</button>
+    <pre id="out"></pre>
+    <script type="module" src="/src/diag.js"></script>
+  </body>
+</html>

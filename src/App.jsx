@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Box from '@mui/material/Box'
 import Slider from '@mui/material/Slider'
 import Typography from '@mui/material/Typography'
@@ -8,6 +8,24 @@ import { NOISE_COLORS } from './noiseColors.js'
 import { useNoisePlayer } from './hooks/useNoisePlayer.js'
 import ColorStage from './components/ColorStage.jsx'
 import ColorPicker from './components/ColorPicker.jsx'
+
+const debug = new URLSearchParams(window.location.search).has('debug')
+
+// Plain-text engine state, shown with ?debug to help diagnose problems on a device.
+function DebugInfo({ engine }) {
+  const [info, setInfo] = useState('')
+  useEffect(() => {
+    const update = () => setInfo(`build ${__BUILD_ID__} · ${JSON.stringify(engine.diagnostics())}`)
+    update()
+    const timer = setInterval(update, 1000)
+    return () => clearInterval(timer)
+  }, [engine])
+  return (
+    <Typography sx={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'text.secondary', wordBreak: 'break-all', textAlign: 'center' }}>
+      {info}
+    </Typography>
+  )
+}
 
 export default function App() {
   const player = useNoisePlayer()
@@ -82,26 +100,31 @@ export default function App() {
                 : '')}
         </Typography>
 
+        {debug && <DebugInfo engine={player.engine} />}
+
         <ColorPicker selectedIndex={colorIndex} onSelect={player.selectIndex} />
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%', px: 1, color: 'text.secondary' }}>
-          <VolumeDownRounded fontSize="small" />
-          <Slider
-            aria-label="Volume"
-            value={volume}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(_, value) => player.setVolume(value)}
-            sx={{
-              color: 'var(--accent)',
-              transition: 'color 1s ease',
-              '& .MuiSlider-rail': { opacity: 0.25 },
-              '& .MuiSlider-thumb': { width: 18, height: 18 },
-            }}
-          />
-          <VolumeUpRounded fontSize="small" />
-        </Box>
+        {/* Phones without per-app volume (iOS) use the hardware buttons instead. */}
+        {player.volumeSupported && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%', px: 1, color: 'text.secondary' }}>
+            <VolumeDownRounded fontSize="small" />
+            <Slider
+              aria-label="Volume"
+              value={volume}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(_, value) => player.setVolume(value)}
+              sx={{
+                color: 'var(--accent)',
+                transition: 'color 1s ease',
+                '& .MuiSlider-rail': { opacity: 0.25 },
+                '& .MuiSlider-thumb': { width: 18, height: 18 },
+              }}
+            />
+            <VolumeUpRounded fontSize="small" />
+          </Box>
+        )}
       </Box>
     </Box>
   )

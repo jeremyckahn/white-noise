@@ -6,8 +6,13 @@ import { VitePWA } from 'vite-plugin-pwa'
 // the deploy workflow supplies through BASE_PATH.
 const base = process.env.BASE_PATH ?? '/'
 
+// Identifies the running build (shown with ?debug) so it's clear which deploy a device has.
+const buildId = (process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 7)
+
 export default defineConfig({
   base,
+  build: { rollupOptions: { input: { main: 'index.html', diag: 'diag.html' } } },
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
     VitePWA({
@@ -17,6 +22,7 @@ export default defineConfig({
         // Everything the app needs, including the audio worklet, is precached.
         globPatterns: ['**/*.{js,css,html,svg,png,woff,woff2,ico,webmanifest}'],
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/diag\.html$/],
         cleanupOutdatedCaches: true,
       },
       manifest: {
