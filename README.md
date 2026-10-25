@@ -4,7 +4,7 @@ A calm, endless noise generator for sleep. An installable, offline-first PWA bui
 
 - **Six colours** – white, pink, brown, blue, violet and grey noise, synthesised live in an `AudioWorklet`. Nothing is recorded or looped, so it never repeats.
 - **Instant switching** – tap a colour, swipe sideways on the main area, or use the lock-screen next/previous controls (arrow keys work on desktop). Colours cross-fade in ~0.2 s.
-- **Keeps playing with the screen off** – audio is routed through a media element and the Media Session / Audio Session APIs, so mobile browsers treat it as media playback. It runs until you pause it.
+- **Keeps playing with the screen off** – output goes straight to the audio device (the glitch-free path), with the Audio Session and Media Session APIs telling mobile browsers to treat it as media playback. If a device stops audio when the screen locks, open the app with `?route=media` to route through an `<audio>` element instead; that path is more likely to survive backgrounding but can stutter on some phones.
 - **Works offline** – the service worker precaches the app, fonts and audio worklet.
 
 ## Development

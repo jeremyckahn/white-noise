@@ -13,13 +13,18 @@ const volumeToGain = (volume) => volume * volume
  * Procedural noise player.
  *
  * One AudioWorklet node per colour is created lazily and cross-faded, so
- * changing colour is instant and the noise itself never loops. The graph is
- * routed through a MediaStream into a real <audio> element: mobile browsers
- * treat that as media playback, which is what keeps sound going once the
- * screen is off or the app is in the background.
+ * changing colour is instant and the noise itself never loops.
+ *
+ * Output goes straight to the audio device, which is the glitch-free path.
+ * The Audio Session API ('playback') is what tells mobile browsers to keep it
+ * going once the screen is off. As a fallback for browsers that ignore that,
+ * `mediaElementOutput` instead routes the graph through a MediaStream into an
+ * <audio> element (open the app with ?route=media to try it). That path is
+ * more likely to be treated as media playback, but can stutter on some phones.
  */
 export class NoiseEngine {
-  constructor({ onStateChange } = {}) {
+  constructor({ onStateChange, mediaElementOutput = false } = {}) {
+    this.mediaElementOutput = mediaElementOutput
     this.onStateChange = onStateChange ?? (() => {})
     this.ctx = null
     this.master = null
@@ -55,7 +60,7 @@ export class NoiseEngine {
       if (ctx.audioWorklet) await ctx.audioWorklet.addModule(workletUrl)
 
       let routedToElement = false
-      if (typeof ctx.createMediaStreamDestination === 'function') {
+      if (this.mediaElementOutput && typeof ctx.createMediaStreamDestination === 'function') {
         const dest = ctx.createMediaStreamDestination()
         this.master.connect(dest)
         const el = document.createElement('audio')
