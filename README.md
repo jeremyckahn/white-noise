@@ -19,6 +19,12 @@ npm run preview   # serve the production build (needed to test the service worke
 
 The icons in `public/icons` are rendered from `public/icon.svg` with `npm run icons` (requires Playwright's Chromium to be available).
 
+## Deployment
+
+- **Vercel** – connected to the repo; it builds with the defaults and serves from the domain root.
+- **GitHub Pages** – `.github/workflows/deploy.yml` tests, builds and publishes `dist/` on every push to `main`. The build gets its base path from `BASE_PATH` (e.g. `/white-noise/`), so the same code works at a root domain or a subpath. In the repo settings, set **Pages → Source** to **GitHub Actions** once.
+- `.github/workflows/ci.yml` runs the tests and a build on pull requests and non-`main` branches.
+
 ## Layout
 
 - `src/audio/generators.js` – the noise algorithms (pure, shared by the worklet and tests)

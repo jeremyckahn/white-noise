@@ -88,8 +88,8 @@ export function useNoisePlayer() {
       artist: 'Lull',
       album: 'White Noise',
       artwork: [
-        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+        { src: `${import.meta.env.BASE_URL}icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
+        { src: `${import.meta.env.BASE_URL}icons/icon-512.png`, sizes: '512x512', type: 'image/png' },
       ],
     })
   }, [colorIndex])
