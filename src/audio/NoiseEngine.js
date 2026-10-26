@@ -20,6 +20,7 @@ export const LONG_LOOP_SECONDS = 240
 const LONG_LOOP_DELAY_MS = 2000
 // A freshly started element reports time 0 for a while before sound comes out.
 const START_TIMEOUT_MS = 1500
+const RELAY_TIMEOUT_MS = 4000
 // A worker ticks while playing; its timestamps show whether the page itself,
 // or only the main thread, stops running while the screen is locked.
 const HEARTBEAT_MS = 1000
@@ -51,7 +52,7 @@ export class NoiseEngine {
     this.longTimer = null
     this.retired = [] // long-loop URLs to revoke once no element is using them
     this.heartbeat = null // { worker, url, last } while playing
-    this.releaseLock = null
+    this.relayStarted = 0
     this.startedAt = performance.now()
     this.events = [] // rolling log, shown with ?debug
     this.health = null // last watcher sample, for spotting stalls
@@ -115,20 +116,21 @@ export class NoiseEngine {
         this.#log(`player ${mine} pause event (${player === this.active ? 'active' : 'idle'}, ${this.playing ? 'wanted playing' : 'wanted paused'})`)
         if (this.playing && player === this.active && el.paused) this.pause()
       })
+      // Timers are held back while the screen is locked, but media events keep
+      // arriving, so they also drive the loop hand-over.
+      el.addEventListener('timeupdate', () => {
+        if (player === this.active) this.#checkLoop()
+      })
       for (const type of ['waiting', 'stalled', 'error', 'ended', 'seeking']) {
         el.addEventListener(type, () => this.#log(`player ${this.players?.indexOf(player)} ${type}${el.error ? ` ${el.error.code}` : ''} at ${el.currentTime.toFixed(2)}s`))
       }
       return player
     })
-    this.watcher = setInterval(() => this.#checkLoop(), WATCH_INTERVAL_MS)
+    this.watcher = setInterval(() => this.#checkLoop({ sample: true }), WATCH_INTERVAL_MS)
   }
 
-  /** Hold a Web Lock and run a worker heartbeat for as long as sound is wanted. */
+  /** Run a worker heartbeat while playing (debug log only). */
   #startKeepAlive() {
-    if (!this.releaseLock && navigator.locks) {
-      const held = new Promise((resolve) => (this.releaseLock = resolve))
-      navigator.locks.request('lull-playing', { mode: 'shared' }, () => held).catch(() => {})
-    }
     if (this.heartbeat) return
     try {
       const url = URL.createObjectURL(new Blob([HEARTBEAT_SOURCE], { type: 'text/javascript' }))
@@ -152,8 +154,6 @@ export class NoiseEngine {
   }
 
   #stopKeepAlive() {
-    this.releaseLock?.()
-    this.releaseLock = null
     if (this.heartbeat) {
       this.heartbeat.worker.terminate()
       URL.revokeObjectURL(this.heartbeat.url)
@@ -178,14 +178,22 @@ export class NoiseEngine {
   }
 
   /** Hand over to the idle element before the active one reaches the end of its loop. */
-  #checkLoop() {
+  #checkLoop({ sample = false } = {}) {
     const player = this.active
     if (!this.playing || !player?.color || player.el.paused) {
       this.health = null
       return
     }
-    this.#checkHealth(player)
-    if (this.relaying || !this.volumeSupported) return
+    if (sample) this.#checkHealth(player)
+    if (this.relaying) {
+      // A hand-over waiting on events that never came must not block the next.
+      if (performance.now() - this.relayStarted < RELAY_TIMEOUT_MS) return
+      this.#log('hand-over timed out')
+      this.token++
+      this.relaying = false
+      this.players.forEach((other) => (other.starting = false))
+    }
+    if (!this.volumeSupported) return
     const { duration, currentTime } = player.el
     if (!Number.isFinite(duration)) return
     // Move onto the long loop as soon as it is ready; otherwise wait for the end.
@@ -193,7 +201,7 @@ export class NoiseEngine {
     const upgrade = longUrl !== null && player.el.src !== longUrl
     if (!upgrade && duration - currentTime > Math.min(RELAY_LEAD_SECONDS, duration * 0.5)) return
     this.relaying = true
-    const started = performance.now()
+    const started = (this.relayStarted = performance.now())
     const fadeMs = Math.min(RELAY_FADE_MS, duration * 300)
     this.#log(`${upgrade ? 'upgrade to long loop' : 'hand-over'} starts at ${currentTime.toFixed(2)}/${duration.toFixed(2)}s (${document.visibilityState})`)
     this.#show(player.color, ++this.token, { relay: true, fadeMs })
