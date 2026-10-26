@@ -12,6 +12,14 @@ const RELAY_LEAD_SECONDS = 3
 const RELAY_FADE_MS = 1500
 const WATCH_INTERVAL_MS = 100
 const LOG_LIMIT = 200
+// With the screen locked the page's timers stop entirely, so the hand-over
+// above cannot run and an element just loops natively (with a small gap at
+// each wrap). The colour being heard is therefore also rendered as one long
+// loop, which wraps only every few minutes.
+export const LONG_LOOP_SECONDS = 240
+const LONG_LOOP_DELAY_MS = 2000
+// A freshly started element reports time 0 for a while before sound comes out.
+const START_TIMEOUT_MS = 1500
 
 // Maps the 0..1 slider onto a gain that feels even to the ear.
 const volumeToGain = (volume) => volume * volume
@@ -31,9 +39,13 @@ const createSilentUrl = () => URL.createObjectURL(encodeWav([new Float32Array(80
  * volume over a quarter of a second.
  */
 export class NoiseEngine {
-  constructor({ onStateChange, loopSeconds = LOOP_SECONDS } = {}) {
+  constructor({ onStateChange, loopSeconds = LOOP_SECONDS, longSeconds = LONG_LOOP_SECONDS } = {}) {
     this.onStateChange = onStateChange ?? (() => {})
     this.loopSeconds = loopSeconds
+    this.longSeconds = longSeconds // 0 disables the long loop
+    this.long = null // { color, url } for the long loop of the colour being heard
+    this.longTimer = null
+    this.retired = [] // long-loop URLs to revoke once no element is using them
     this.startedAt = performance.now()
     this.events = [] // rolling log, shown with ?debug
     this.health = null // last watcher sample, for spotting stalls
@@ -50,7 +62,11 @@ export class NoiseEngine {
     this.relaying = false
     this.watcher = null
     this.volumeProbe = undefined
-    document.addEventListener('visibilitychange', () => this.#log(`page ${document.visibilityState}`))
+    document.addEventListener('visibilitychange', () => {
+      this.#log(`page ${document.visibilityState}`)
+      // Timers stop once the page is hidden, so don't leave a cross-fade half done.
+      if (document.hidden && this.playing && this.players) this.#fade()
+    })
   }
 
   #log(message) {
@@ -124,11 +140,14 @@ export class NoiseEngine {
     if (this.relaying || !this.volumeSupported) return
     const { duration, currentTime } = player.el
     if (!Number.isFinite(duration)) return
-    if (duration - currentTime > Math.min(RELAY_LEAD_SECONDS, duration * 0.5)) return
+    // Move onto the long loop as soon as it is ready; otherwise wait for the end.
+    const longUrl = this.#longReady(player.color)
+    const upgrade = longUrl !== null && player.el.src !== longUrl
+    if (!upgrade && duration - currentTime > Math.min(RELAY_LEAD_SECONDS, duration * 0.5)) return
     this.relaying = true
     const started = performance.now()
     const fadeMs = Math.min(RELAY_FADE_MS, duration * 300)
-    this.#log(`hand-over starts at ${currentTime.toFixed(2)}/${duration.toFixed(2)}s (${document.visibilityState})`)
+    this.#log(`${upgrade ? 'upgrade to long loop' : 'hand-over'} starts at ${currentTime.toFixed(2)}/${duration.toFixed(2)}s (${document.visibilityState})`)
     this.#show(player.color, ++this.token, { relay: true, fadeMs })
       .then(() => this.#log(`hand-over took ${Math.round(performance.now() - started)}ms`))
       .catch((error) => this.#log(`hand-over failed: ${error?.name}`))
@@ -146,6 +165,51 @@ export class NoiseEngine {
     return url
   }
 
+  #longReady(color) {
+    return this.long?.color === color ? this.long.url : null
+  }
+
+  /** Shortly after the colour settles, render its long loop in the background. */
+  #prepareLong(color) {
+    clearTimeout(this.longTimer)
+    if (!this.longSeconds || !this.volumeSupported || this.long?.color === color) return
+    this.longTimer = setTimeout(() => {
+      if (!this.playing || this.color !== color) return
+      if (this.long?.url) this.retired.push(this.long.url)
+      const entry = { color, url: null }
+      this.long = entry
+      const started = performance.now()
+      generateLoopBlob(color, SAMPLE_RATE, this.longSeconds).then((blob) => {
+        if (!blob || this.long !== entry) return
+        entry.url = URL.createObjectURL(blob)
+        this.#log(`${this.longSeconds}s ${color} loop ready after ${Math.round(performance.now() - started)}ms`)
+      })
+    }, LONG_LOOP_DELAY_MS)
+  }
+
+  #revokeRetired() {
+    this.retired = this.retired.filter((url) => {
+      if (this.players?.some((player) => player.el.src === url)) return true
+      URL.revokeObjectURL(url)
+      return false
+    })
+  }
+
+  /** Resolves once the element is really producing sound, not just after play() resolves. */
+  #started(el) {
+    return new Promise((resolve) => {
+      if (el.currentTime > 0) return resolve()
+      const done = () => {
+        clearTimeout(timer)
+        el.removeEventListener('timeupdate', check)
+        resolve()
+      }
+      const check = () => el.currentTime > 0 && done()
+      const timer = setTimeout(done, START_TIMEOUT_MS)
+      el.addEventListener('timeupdate', check)
+    })
+  }
+
   #applyVolume(player) {
     if (this.volumeSupported) player.el.volume = Math.sin((player.phase * Math.PI) / 2) * volumeToGain(this.volume)
   }
@@ -156,6 +220,8 @@ export class NoiseEngine {
     // No volume control (iOS), or the page is hidden where timers are throttled
     // and an instant change matters more: switch immediately.
     if (!this.volumeSupported || document.hidden) {
+      clearInterval(this.ticker)
+      this.ticker = null
       for (const player of this.players) {
         player.phase = target(player)
         this.#applyVolume(player)
@@ -203,7 +269,7 @@ export class NoiseEngine {
 
   /** Make `color` the audible one. Stale calls (superseded or paused) bail out. */
   async #show(color, token, { relay = false, fadeMs = FADE_MS } = {}) {
-    const url = await this.#url(color)
+    const url = this.#longReady(color) ?? (await this.#url(color))
     if (token !== this.token || !this.playing) return
     const current = this.active
     if (current.color === color && !relay) {
@@ -218,6 +284,8 @@ export class NoiseEngine {
       try {
         next.el.src = url
         await next.el.play()
+        // Fading before it is audible would leave a dip as the old one goes.
+        await this.#started(next.el)
       } catch (error) {
         // A newer colour replacing the source aborts this one quietly; anything
         // else (blocked by the browser) is a real failure.
@@ -234,6 +302,7 @@ export class NoiseEngine {
     this.#hideScrubber()
     this.fadeMs = relay ? fadeMs : FADE_MS
     this.#fade()
+    this.#revokeRetired()
   }
 
   setVolume(volume) {
@@ -244,7 +313,10 @@ export class NoiseEngine {
   setColor(color) {
     this.#log(`colour -> ${color}`)
     this.color = color
-    if (this.players && this.playing) this.#show(color, ++this.token).catch(() => this.pause())
+    if (this.players && this.playing) {
+      this.#show(color, ++this.token).catch(() => this.pause())
+      this.#prepareLong(color)
+    }
   }
 
   /** Must be called from a user gesture the first time (autoplay policies). */
@@ -271,6 +343,7 @@ export class NoiseEngine {
         this.active = this.players[0]
       }
       await this.#show(color, token)
+      this.#prepareLong(color)
       // Quietly prepare the other colours so switching to them is instant.
       NOISE_TYPES.forEach((type) => this.#url(type))
     } catch (error) {
@@ -306,10 +379,13 @@ export class NoiseEngine {
       loopSeconds: this.loopSeconds,
       volumeSupported: this.volumeSupported,
       loopsReady: this.urls.size,
+      longSeconds: this.longSeconds,
+      long: this.long ? `${this.long.color} ${this.long.url ? 'ready' : 'rendering'}` : null,
       players: this.players?.map((player) => ({
         color: player.color,
         active: player === this.active,
         paused: player.el.paused,
+        long: Boolean(this.long?.url) && player.el.src === this.long.url,
         time: +player.el.currentTime.toFixed(1),
         volume: +player.el.volume.toFixed(2),
       })),
