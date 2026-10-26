@@ -36,7 +36,20 @@ export function useNoisePlayer() {
   const [hasSwitched, setHasSwitched] = useState(Boolean(initial.hasSwitched))
 
   const engineRef = useRef(null)
-  if (!engineRef.current) engineRef.current = new NoiseEngine({ onStateChange: setPlaying })
+  if (!engineRef.current) {
+    // Debugging: ?loop=1 makes every loop one second long, to exercise the loop
+    // hand-over constantly (and turns the long loop off); ?long=40 sets the
+    // length of the long loop that covers a locked screen.
+    const params = new URLSearchParams(window.location.search)
+    const loop = Number(params.get('loop'))
+    const long = Number(params.get('long'))
+    engineRef.current = new NoiseEngine({
+      onStateChange: setPlaying,
+      heartbeat: params.has('debug'),
+      ...(loop >= 0.5 && loop <= 60 && { loopSeconds: loop, longSeconds: 0 }),
+      ...(long >= 10 && long <= 900 && { longSeconds: long }),
+    })
+  }
   const engine = engineRef.current
 
   const colorIndexRef = useRef(colorIndex)
