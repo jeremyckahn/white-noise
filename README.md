@@ -2,7 +2,7 @@
 
 A calm, endless noise generator for sleep. An installable, offline-first PWA built with React, Vite and MUI.
 
-- **Six colours** – white, pink, brown, blue, violet and grey noise, generated procedurally on your device (in a Web Worker) each launch. Each colour is a 20-second stereo loop with a cross-faded seam, wrapped as a WAV and played by an ordinary `<audio>` element. A second element takes over shortly before each loop ends and the two cross-fade, because native looping leaves a ~100 ms gap. With the screen locked a page's timers stop, so that hand-over can't run; the colour you're hearing is therefore also rendered as a 4-minute loop in the background and swapped in, so the unavoidable native wrap happens only every few minutes.
+- **Six colours** – white, pink, brown, blue, violet and grey noise, generated procedurally on your device (in a Web Worker) each launch. Each colour is a 20-second stereo loop with a cross-faded seam, wrapped as a WAV and played by an ordinary `<audio>` element. A second element takes over shortly before each loop ends and the two cross-fade, because native looping leaves a ~100 ms gap. With the screen locked Android holds back page timers but still delivers media events, so the hand-over and its cross-fade are driven from those. The colour you're hearing is also rendered as a 4-minute loop in the background and swapped in, so hand-overs are rare overnight.
 - **Instant switching** – tap a colour, swipe sideways on the main area, or use the lock-screen next/previous controls (arrow keys work on desktop). Colours cross-fade in a quarter of a second.
 - **Keeps playing with the screen off** – because it is real media playback, Android and iOS show lock-screen controls (play/pause, next/previous colour) and keep the page alive. Media Session is told the stream is endless so lock screens don't draw a progress bar. It runs until you pause it. (iOS can't set an `<audio>` element's volume, so there the in-app slider is hidden, use the hardware buttons, and colours switch without a cross-fade.)
 - **Works offline** – the service worker precaches the app, fonts and loop worker.
@@ -17,7 +17,7 @@ npm run build     # production build in dist/
 npm run preview   # serve the production build (needed to test the service worker)
 ```
 
-Add `?debug` to the URL to show the build id and audio state on screen.
+Add `?debug` to the URL to show the build id and audio state on screen. It also shows a copyable event log (hand-overs, element events, page visibility). `?loop=N` sets the loop length in seconds and turns the long loop off, and `?long=N` sets the long loop's length. Loops under about 5 seconds aren't treated as music by Android, so they are no use for lock-screen testing; try `?loop=6`.
 
 
 The icons in `public/icons` are rendered from `public/icon.svg` with `npm run icons` (requires Playwright's Chromium to be available).

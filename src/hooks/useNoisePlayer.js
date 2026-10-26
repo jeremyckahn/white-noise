@@ -45,6 +45,7 @@ export function useNoisePlayer() {
     const long = Number(params.get('long'))
     engineRef.current = new NoiseEngine({
       onStateChange: setPlaying,
+      heartbeat: params.has('debug'),
       ...(loop >= 0.5 && loop <= 60 && { loopSeconds: loop, longSeconds: 0 }),
       ...(long >= 10 && long <= 900 && { longSeconds: long }),
     })

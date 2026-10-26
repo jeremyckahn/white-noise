@@ -12,10 +12,10 @@ const RELAY_LEAD_SECONDS = 3
 const RELAY_FADE_MS = 1500
 const WATCH_INTERVAL_MS = 100
 const LOG_LIMIT = 200
-// With the screen locked the page's timers stop entirely, so the hand-over
-// above cannot run and an element just loops natively (with a small gap at
-// each wrap). The colour being heard is therefore also rendered as one long
-// loop, which wraps only every few minutes.
+// With the screen locked, page timers are held back but media events still
+// arrive, so the hand-over and its cross-fade are stepped from those events.
+// The colour being heard is also rendered as one long loop, which keeps the
+// number of hand-overs (and so the chance of a glitch) low overnight.
 export const LONG_LOOP_SECONDS = 240
 const LONG_LOOP_DELAY_MS = 2000
 // A freshly started element reports time 0 for a while before sound comes out.
@@ -44,10 +44,11 @@ const createSilentUrl = () => URL.createObjectURL(encodeWav([new Float32Array(80
  * volume over a quarter of a second.
  */
 export class NoiseEngine {
-  constructor({ onStateChange, loopSeconds = LOOP_SECONDS, longSeconds = LONG_LOOP_SECONDS } = {}) {
+  constructor({ onStateChange, loopSeconds = LOOP_SECONDS, longSeconds = LONG_LOOP_SECONDS, heartbeat = false } = {}) {
     this.onStateChange = onStateChange ?? (() => {})
     this.loopSeconds = loopSeconds
     this.longSeconds = longSeconds // 0 disables the long loop
+    this.wantHeartbeat = heartbeat // debug only: costs a wake-up every second
     this.long = null // { color, url } for the long loop of the colour being heard
     this.longTimer = null
     this.retired = [] // long-loop URLs to revoke once no element is using them
@@ -136,7 +137,7 @@ export class NoiseEngine {
 
   /** Run a worker heartbeat while playing (debug log only). */
   #startKeepAlive() {
-    if (this.heartbeat) return
+    if (this.heartbeat || !this.wantHeartbeat) return
     try {
       const url = URL.createObjectURL(new Blob([HEARTBEAT_SOURCE], { type: 'text/javascript' }))
       const worker = new Worker(url)
