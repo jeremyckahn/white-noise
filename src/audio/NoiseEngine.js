@@ -20,6 +20,10 @@ export const LONG_LOOP_SECONDS = 240
 const LONG_LOOP_DELAY_MS = 2000
 // A freshly started element reports time 0 for a while before sound comes out.
 const START_TIMEOUT_MS = 1500
+// A worker ticks while playing; its timestamps show whether the page itself,
+// or only the main thread, stops running while the screen is locked.
+const HEARTBEAT_MS = 1000
+const HEARTBEAT_SOURCE = `setInterval(() => postMessage(Date.now()), ${HEARTBEAT_MS})`
 
 // Maps the 0..1 slider onto a gain that feels even to the ear.
 const volumeToGain = (volume) => volume * volume
@@ -46,6 +50,8 @@ export class NoiseEngine {
     this.long = null // { color, url } for the long loop of the colour being heard
     this.longTimer = null
     this.retired = [] // long-loop URLs to revoke once no element is using them
+    this.heartbeat = null // { worker, url, last } while playing
+    this.releaseLock = null
     this.startedAt = performance.now()
     this.events = [] // rolling log, shown with ?debug
     this.health = null // last watcher sample, for spotting stalls
@@ -96,7 +102,11 @@ export class NoiseEngine {
       el.loop = true
       el.preload = 'auto'
       el.setAttribute('playsinline', '')
+      el.hidden = true
       el.src = silent
+      // Part of the page, as ordinary media players are, in case that affects
+      // whether the browser keeps the page running while locked.
+      document.body.append(el)
       const player = { el, color: null, phase: 0, starting: false }
       // The system (lock screen, another app taking focus, a call) can pause
       // playback; mirror that rather than carrying on invisibly.
@@ -105,12 +115,50 @@ export class NoiseEngine {
         this.#log(`player ${mine} pause event (${player === this.active ? 'active' : 'idle'}, ${this.playing ? 'wanted playing' : 'wanted paused'})`)
         if (this.playing && player === this.active && el.paused) this.pause()
       })
-      for (const type of ['waiting', 'stalled', 'error', 'ended']) {
+      for (const type of ['waiting', 'stalled', 'error', 'ended', 'seeking']) {
         el.addEventListener(type, () => this.#log(`player ${this.players?.indexOf(player)} ${type}${el.error ? ` ${el.error.code}` : ''} at ${el.currentTime.toFixed(2)}s`))
       }
       return player
     })
     this.watcher = setInterval(() => this.#checkLoop(), WATCH_INTERVAL_MS)
+  }
+
+  /** Hold a Web Lock and run a worker heartbeat for as long as sound is wanted. */
+  #startKeepAlive() {
+    if (!this.releaseLock && navigator.locks) {
+      const held = new Promise((resolve) => (this.releaseLock = resolve))
+      navigator.locks.request('lull-playing', { mode: 'shared' }, () => held).catch(() => {})
+    }
+    if (this.heartbeat) return
+    try {
+      const url = URL.createObjectURL(new Blob([HEARTBEAT_SOURCE], { type: 'text/javascript' }))
+      const worker = new Worker(url)
+      const beat = { worker, url, last: null }
+      worker.onmessage = ({ data: sent }) => {
+        const delivered = Date.now()
+        if (beat.last !== null && sent - beat.last > HEARTBEAT_MS * 1.5) {
+          this.#log(`worker paused for ${sent - beat.last}ms (ticks resumed)`)
+        }
+        if (delivered - sent > HEARTBEAT_MS * 1.5 && delivered - (beat.reported ?? 0) > 500) {
+          beat.reported = delivered
+          this.#log(`main thread received a worker tick ${delivered - sent}ms late`)
+        }
+        beat.last = sent
+      }
+      this.heartbeat = beat
+    } catch {
+      /* workers unavailable */
+    }
+  }
+
+  #stopKeepAlive() {
+    this.releaseLock?.()
+    this.releaseLock = null
+    if (this.heartbeat) {
+      this.heartbeat.worker.terminate()
+      URL.revokeObjectURL(this.heartbeat.url)
+      this.heartbeat = null
+    }
   }
 
   /** Log timer lateness and stretches where the audio clock fell behind real time. */
@@ -325,6 +373,7 @@ export class NoiseEngine {
     this.color = color
     this.playing = true
     this.onStateChange(true)
+    this.#startKeepAlive()
     const token = ++this.token
     try {
       // Lets playback continue with the screen locked and the ringer switch on silent.
@@ -348,6 +397,7 @@ export class NoiseEngine {
       NOISE_TYPES.forEach((type) => this.#url(type))
     } catch (error) {
       this.playing = false
+      this.#stopKeepAlive()
       this.onStateChange(false)
       throw error
     }
@@ -358,6 +408,7 @@ export class NoiseEngine {
     this.#log('pause()')
     this.playing = false
     this.token++
+    this.#stopKeepAlive()
     this.onStateChange(false)
     this.fadeMs = FADE_MS
     if (this.players) this.#fade()
