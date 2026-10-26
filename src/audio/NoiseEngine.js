@@ -129,6 +129,13 @@ export class NoiseEngine {
     this.watcher = setInterval(() => this.#checkLoop({ sample: true }), WATCH_INTERVAL_MS)
   }
 
+  /** Compact element state for the log: ready/network state, decoded bytes, volume. */
+  #describe(player) {
+    const { el } = player
+    const bytes = el.webkitAudioDecodedByteCount
+    return `${player === this.active ? 'A' : 'i'}:${el.paused ? 'paused' : 'playing'} rs${el.readyState} ns${el.networkState} vol${el.volume.toFixed(2)}${el.muted ? ' muted' : ''}${bytes === undefined ? '' : ` ${Math.round(bytes / 1000)}kB`}`
+  }
+
   /** Run a worker heartbeat while playing (debug log only). */
   #startKeepAlive() {
     if (this.heartbeat) return
@@ -203,7 +210,7 @@ export class NoiseEngine {
     this.relaying = true
     const started = (this.relayStarted = performance.now())
     const fadeMs = Math.min(RELAY_FADE_MS, duration * 300)
-    this.#log(`${upgrade ? 'upgrade to long loop' : 'hand-over'} starts at ${currentTime.toFixed(2)}/${duration.toFixed(2)}s (${document.visibilityState})`)
+    this.#log(`${upgrade ? 'upgrade to long loop' : 'hand-over'} starts at ${currentTime.toFixed(2)}/${duration.toFixed(2)}s (${document.visibilityState}); ${this.players.map((p) => this.#describe(p)).join('; ')}`)
     this.#show(player.color, ++this.token, { relay: true, fadeMs })
       .then(() => this.#log(`hand-over took ${Math.round(performance.now() - started)}ms`))
       .catch((error) => this.#log(`hand-over failed: ${error?.name}`))
