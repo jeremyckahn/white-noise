@@ -64,16 +64,13 @@ export class NoiseEngine {
     this.playing = false
     this.token = 0 // incremented whenever playback intent changes, to drop stale work
     this.ticker = null
+    this.fading = false
     this.lastTick = 0
     this.fadeMs = FADE_MS
     this.relaying = false
     this.watcher = null
     this.volumeProbe = undefined
-    document.addEventListener('visibilitychange', () => {
-      this.#log(`page ${document.visibilityState}`)
-      // Timers stop once the page is hidden, so don't leave a cross-fade half done.
-      if (document.hidden && this.playing && this.players) this.#fade()
-    })
+    document.addEventListener('visibilitychange', () => this.#log(`page ${document.visibilityState}`))
   }
 
   #log(message) {
@@ -119,6 +116,7 @@ export class NoiseEngine {
       // Timers are held back while the screen is locked, but media events keep
       // arriving, so they also drive the loop hand-over.
       el.addEventListener('timeupdate', () => {
+        this.#step()
         if (player === this.active) this.#checkLoop()
       })
       for (const type of ['waiting', 'stalled', 'error', 'ended', 'seeking']) {
@@ -279,41 +277,47 @@ export class NoiseEngine {
 
   /** Move every player towards audible (the active one) or silent (the rest). */
   #fade() {
-    const target = (player) => (this.playing && player === this.active ? 1 : 0)
-    // No volume control (iOS), or the page is hidden where timers are throttled
-    // and an instant change matters more: switch immediately.
-    if (!this.volumeSupported || document.hidden) {
-      clearInterval(this.ticker)
-      this.ticker = null
+    // No volume control (iOS): switch immediately.
+    if (!this.volumeSupported) {
       for (const player of this.players) {
-        player.phase = target(player)
-        this.#applyVolume(player)
+        player.phase = this.#target(player)
         if (player.phase === 0 && !player.starting) player.el.pause()
       }
       return
     }
-    if (this.ticker) return
+    if (this.fading) return
+    this.fading = true
     this.lastTick = performance.now()
-    this.ticker = setInterval(() => {
-      const now = performance.now()
-      const step = (now - this.lastTick) / this.fadeMs
-      this.lastTick = now
-      let moving = false
-      for (const player of this.players) {
-        const goal = target(player)
-        player.phase = goal > player.phase ? Math.min(goal, player.phase + step) : Math.max(goal, player.phase - step)
-        this.#applyVolume(player)
-        if (player.phase === goal) {
-          if (goal === 0 && !player.starting && !player.el.paused) player.el.pause()
-        } else {
-          moving = true
-        }
+    // Timers are held back while the screen is locked, so media events step the
+    // fade too (a few times a second: coarse, but far better than an abrupt swap).
+    this.ticker = setInterval(() => this.#step(), 20)
+  }
+
+  #target(player) {
+    return this.playing && player === this.active ? 1 : 0
+  }
+
+  #step() {
+    if (!this.fading) return
+    const now = performance.now()
+    const step = (now - this.lastTick) / this.fadeMs
+    this.lastTick = now
+    let moving = false
+    for (const player of this.players) {
+      const goal = this.#target(player)
+      player.phase = goal > player.phase ? Math.min(goal, player.phase + step) : Math.max(goal, player.phase - step)
+      this.#applyVolume(player)
+      if (player.phase === goal) {
+        if (goal === 0 && !player.starting && !player.el.paused) player.el.pause()
+      } else {
+        moving = true
       }
-      if (!moving) {
-        clearInterval(this.ticker)
-        this.ticker = null
-      }
-    }, 20)
+    }
+    if (!moving) {
+      this.fading = false
+      clearInterval(this.ticker)
+      this.ticker = null
+    }
   }
 
   /** Report an endless stream so lock screens don't draw a progress bar for the loop. */
